@@ -12,6 +12,10 @@ OpenClaw Agent 自建 Skills 集 —— Ozon 电商运营 + AI 工具链。
 | `ozon-daily-monitor` | Ozon 店铺每日监控四合一:销量/曝光/营销价/商品洞察 → PostgreSQL 增量落库 | Ozon Seller API、PostgreSQL、V2ray 代理 |
 | `ozon-competitor-price-research` | Ozon 前台竞品价格调查:Edge CDP → ozon_search → 价格带分析 | Edge 浏览器、Ozon 前台 |
 | `deepseek-batch-translation` | DeepSeek API 批量中英对照翻译:md 解析/分批/缓存续跑/补翻循环 | DeepSeek API key |
+| `ozon-seerfar-data-collection` | Ozon 竞品数据采集(SeerFar API 逐条落盘 Excel, 4 Sheet) | SeerFar API |
+| `ozon-step2-image-generation` | 电商主图生成(去文字抠白底 + 8图框架批量生成) | Banana Pro API、腾讯云 COS |
+| `ozon-step3-listing` | 商品上架(先查 MCP 再调 API, 属性格式验证) | Ozon Seller API |
+| `ozon-step5-operations` | 运营优化(广告投放 Performance API + 竞品监控) | Ozon Performance API |
 | `vision-look` | 图片识别/视觉理解:AI 看图(硅基流动 Qwen3-VL),OCR/电商图/评价截图 | SiliconFlow API key |
 
 ## 快速开始
