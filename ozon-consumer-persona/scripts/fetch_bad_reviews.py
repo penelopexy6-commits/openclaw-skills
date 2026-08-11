@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-竞品好评抓取（通用版，4-5 星，购买动机分析用）→ competitor_reviews 表（score 4/5，source=good）
-复用 _fetch_composer 翻页（sort=score_desc，paging.nextButton 正确翻页）
-用法:
-  CHROME_CDP_PORT=9223 <mcp-venv>/python scripts/fetch_good_reviews.py \
-      --category 宠物玩具 --skus "679081380,1072804945,1293182211" --target 200
+竞品差评抓取（通用版，1-2 星，score_asc 翻页）→ competitor_reviews 表
+用法: CHROME_CDP_PORT=9223 .venv/bin/python scripts/fetch_bad_reviews.py \
+      --category 智能手表 --skus "3972075096,4115126740" --target 300
 """
 import argparse
 import asyncio
@@ -50,11 +48,11 @@ def db_conn():
     return psycopg2.connect(**DB)
 
 
-async def fetch_good(sku: str, limit: int) -> list[dict]:
+async def fetch_bad(sku: str, limit: int) -> list[dict]:
     canonical, err = _canonical_product_path_from_input(sku)
     if err:
         raise RuntimeError(f"canonical path error: {err}")
-    next_path = f"/product/{sku}/reviews/?sort=score_desc"
+    next_path = f"/product/{sku}/reviews/?sort=score_asc"
     collected = []
     seen = set()
     pages = 0
@@ -71,7 +69,7 @@ async def fetch_good(sku: str, limit: int) -> list[dict]:
             log(f"  page {pages}: JSON 解析失败: {exc}")
             break
         list_w = _widget(payload.get("widgetStates") or {}, "webListReviews")
-        page_good = 0
+        page_bad = 0
         for r in list_w.get("reviews") if isinstance(list_w.get("reviews"), list) else []:
             if not isinstance(r, dict):
                 continue
@@ -84,16 +82,16 @@ async def fetch_good(sku: str, limit: int) -> list[dict]:
             if not item:
                 continue
             score = int(item.get("score") or 0)
-            if score >= 4:
-                page_good += 1
+            if score <= 3:
+                page_bad += 1
                 collected.append(item)
                 if len(collected) >= limit:
                     break
-        log(f"  page {pages}: +{page_good} 条好评 (累计 {len(collected)})")
-        if page_good == 0:
+        log(f"  page {pages}: +{page_bad} 条差评 (累计 {len(collected)})")
+        if page_bad == 0:
             empty_streak += 1
             if empty_streak >= STOP_EMPTY_PAGES:
-                log("  连续无好评，停止")
+                log("  连续无差评，停止")
                 break
         else:
             empty_streak = 0
@@ -113,7 +111,7 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--category", required=True)
     ap.add_argument("--skus", required=True, help="逗号分隔 SKU")
-    ap.add_argument("--target", type=int, default=200, help="每 SKU 目标好评数")
+    ap.add_argument("--target", type=int, default=300, help="每 SKU 目标差评数")
     ap.add_argument("--fetch-date", default="", help="YYYY-MM-DD，默认今天")
     args = ap.parse_args()
 
@@ -123,14 +121,14 @@ async def main():
 
     conn = db_conn()
     with conn.cursor() as cur:
-        cur.execute("SELECT sku, score, text FROM competitor_reviews WHERE category=%s AND score>=4", (args.category,))
+        cur.execute("SELECT sku, score, text FROM competitor_reviews WHERE category=%s AND score<=3", (args.category,))
         existing = {(r[0], r[1], (r[2] or "").strip()) for r in cur.fetchall()}
-    log(f"[{args.category}] 已有好评 {len(existing)} 条 | SKU: {skus} | 每 SKU 目标 {args.target}")
+    log(f"[{args.category}] 已有差评 {len(existing)} 条 | SKU: {skus} | 每 SKU 目标 {args.target}")
 
     total = 0
     for sku in skus:
-        log(f"抓取 {sku} 好评...")
-        items = await fetch_good(sku, args.target)
+        log(f"抓取 {sku} 差评...")
+        items = await fetch_bad(sku, args.target)
         rows = []
         for it in items:
             full = (it.get("text") or "").strip()
@@ -143,7 +141,7 @@ async def main():
                 "platform": "ozon", "fetch_date": fetch_date, "sku": int(sku),
                 "score": it.get("score"), "text": full, "author": it.get("author"),
                 "review_date": it.get("date"), "category": args.category,
-                "source": "ozon_reviews_front_good",
+                "source": "ozon_reviews_front_bad",
             })
             existing.add(key)
         with conn.cursor() as cur:
@@ -158,8 +156,8 @@ async def main():
                 )
         conn.commit()
         total += len(rows)
-        log(f"  ✓ {sku} 新入库好评 {len(rows)} 条")
-    log(f"=== [{args.category}] 完成: 好评新入库 {total} 条 ===")
+        log(f"  ✓ {sku} 新入库差评 {len(rows)} 条")
+    log(f"=== [{args.category}] 完成: 差评新入库 {total} 条 ===")
     conn.close()
 
 

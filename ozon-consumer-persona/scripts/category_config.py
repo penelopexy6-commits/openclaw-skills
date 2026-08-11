@@ -208,7 +208,13 @@ def _glass_personas(agg):
 # 兜底
 # =====================================================================
 def _fallback_persona(pain_map):
-    top = pain_map.most_common(1)[0] if pain_map else ("other", 0)
+    if hasattr(pain_map, "most_common"):  # Counter
+        top = pain_map.most_common(1)[0] if pain_map else ("other", 0)
+    elif pain_map:  # dict
+        k = max(pain_map, key=pain_map.get)
+        top = (k, pain_map[k])
+    else:
+        top = ("other", 0)
     return {
         "id": "P1", "name": "核心购买人群", "percentage": 100, "age": "未知", "gender": "未知",
         "body": "未知", "scene": "未知", "pain": [(top[0], top[1])],
@@ -266,6 +272,95 @@ def _glass_landing(agg):
 
 
 # =====================================================================
+# 智能手表（荣超坤店，规则03达标竞品）
+# =====================================================================
+WATCH_PROMPT_ENUMS = """- pain_point: screen=屏幕问题（花屏/白条/黑屏/触控失灵）, battery=续航差/掉电快, sensor=测量不准（血压/心率/血氧/计步）, connect=连接问题（蓝牙断连/收不到通知）, sound=声音问题（无铃声/无声/通知不响）, strap=表带问题（扣子坏/易断/过敏）, quality=做工质量差, wrong_item=发错货/二手/缺件, no_manual=无俄语说明书/功能不符描述, none=无明显痛点, other=其他
+- emotion: positive=满意, neutral=一般, negative=失望, angry=愤怒
+- body_feature: female=女性用户, male=男性用户, kid=儿童, elderly=老人/送父母, unknown=无法判断
+- usage_scene: fitness=运动/健身, health=健康监测（血压/心率）, daily=日常佩戴, work=办公/看消息, gift=送礼, unknown=无法判断
+- purchase_reason: price=价格合适, design=外观好看, health=健康监测功能, battery=续航好, screen=屏幕好, gift=送礼, quality=质量好, brand=品牌, unknown=无"""
+
+
+def _watch_personas(agg):
+    pain_map = {k: pct for k, c, pct in agg["pain"]}
+    scene_map = {k: pct for k, c, pct in agg["scenes"]}
+    total = agg["total_reviews"] or 1
+    screen = pain_map.get("screen", 0)
+    battery = pain_map.get("battery", 0)
+    sensor = pain_map.get("sensor", 0)
+    connect = pain_map.get("connect", 0)
+    health = scene_map.get("health", 0)
+    fitness = scene_map.get("fitness", 0)
+    gift = scene_map.get("gift", 0)
+
+    personas = []
+    if screen > 10:
+        personas.append({
+            "id": "P1", "name": "屏幕质量敏感用户（Screen Quality First）",
+            "percentage": round(screen, 0),
+            "age": "25-45", "gender": "男女", "body": "对显示/触控要求高",
+            "scene": f"日常佩戴+看消息（{scene_map.get('daily', 0)}%）",
+            "pain": [("屏幕问题", screen), ("做工质量差", pain_map.get("quality", 0))],
+            "keywords": ["смарт часы amoled", "умные часы с хорошим экраном"],
+            "visual": "屏幕实拍（亮屏/息屏）+ 触控演示 + 分辨率标注",
+            "ad": ["高清不花屏", "AMOLED 屏实测", "触控流畅"],
+        })
+    if battery > 8 or sensor > 8:
+        personas.append({
+            "id": "P2", "name": "健康监测刚需用户（Health Tracker）",
+            "percentage": round(battery + sensor, 0),
+            "age": "30-55", "gender": "男女", "body": "关注血压/心率/睡眠，可能送父母",
+            "scene": f"健康监测（{health}%）",
+            "pain": [("测量不准", sensor), ("续航差", battery)],
+            "keywords": ["смарт часы с давлением", "часы с пульсометром"],
+            "visual": "血压/心率实测对比图 + 传感器位置说明",
+            "ad": ["测量准确承诺", "续航 7 天", "老人健康监护"],
+        })
+    if connect > 8:
+        personas.append({
+            "id": "P3", "name": "连接体验挑剔用户（Connectivity First）",
+            "percentage": round(connect, 0),
+            "age": "25-40", "gender": "男女", "body": "依赖通知/通话功能",
+            "scene": "办公/看消息",
+            "pain": [("连接问题", connect), ("声音问题", pain_map.get("sound", 0))],
+            "keywords": ["смарт часы с звонками", "часы уведомления"],
+            "visual": "来电/通知推送截图演示 + 蓝牙连接稳定性说明",
+            "ad": ["连接稳定不掉线", "通知即时推送", "通话清晰"],
+        })
+    if gift > 5:
+        personas.append({
+            "id": "P4", "name": "送礼人群（Gift Buyer）",
+            "percentage": round(gift, 0),
+            "age": "30-55", "gender": "男女（送父母/伴侣/子女）", "body": "给长辈/伴侣买",
+            "scene": "送礼",
+            "pain": [("发错货/二手", pain_map.get("wrong_item", 0)), ("无俄语说明书", pain_map.get("no_manual", 0))],
+            "keywords": ["смарт часы подарок", "часы для родителей"],
+            "visual": "礼盒包装展示 + 俄语说明书承诺 + 长辈使用场景",
+            "ad": ["送礼体面", "附俄语说明书", "长辈易上手"],
+        })
+    if not personas:
+        personas.append(_fallback_persona(pain_map))
+    return personas
+
+
+def _watch_landing(agg):
+    pain_map = {k: pct for k, c, pct in agg["pain"]}
+    points = []
+    if pain_map.get("screen", 0) >= 8:
+        points.append(f"屏幕质控（第一痛点 屏幕问题 {pain_map['screen']}%）→ 出货前点亮测试 + 主图实拍")
+    if pain_map.get("sensor", 0) >= 5:
+        points.append(f"测量功能校准（测量不准 {pain_map['sensor']}%）→ 出厂校准 + 说明误差范围")
+    if pain_map.get("battery", 0) >= 5:
+        points.append(f"续航实测宣传（续航差 {pain_map['battery']}%）→ 实标续航天数")
+    if pain_map.get("connect", 0) >= 5:
+        points.append(f"连接稳定性（断连 {pain_map['connect']}%）→ 固件更新 + 兼容性说明")
+    if pain_map.get("wrong_item", 0) >= 5 or pain_map.get("no_manual", 0) >= 5:
+        points.append(f"品控红线：发货验货（错发/二手 {pain_map.get('wrong_item',0)}%）+ 附俄语说明书（{pain_map.get('no_manual',0)}%）")
+    points.append("详情页如实标注功能（血压/血氧等测量仅参考，防功能不符差评）")
+    return points
+
+
+# =====================================================================
 # 注册表
 # =====================================================================
 CATEGORY_CONFIG = {
@@ -309,6 +404,21 @@ CATEGORY_CONFIG = {
                      "driving": "开车", "gift": "送礼", "daily": "日常", "unknown": "未知"},
         "REASON_CN": {"clarity": "清晰度高", "comfort": "佩戴舒适", "price": "价格合适",
                       "design": "设计好看", "quality": "质量好", "brand": "品牌", "unknown": "未明确"},
+    },
+    "智能手表": {
+        "product_cn": "智能手表",
+        "prompt_enums": WATCH_PROMPT_ENUMS,
+        "build_personas": _watch_personas,
+        "landing_points": _watch_landing,
+        "PAIN_CN": {"screen": "屏幕问题", "battery": "续航差", "sensor": "测量不准",
+                    "connect": "连接问题", "sound": "声音问题", "strap": "表带问题",
+                    "quality": "做工质量差", "wrong_item": "发错货/二手/缺件",
+                    "no_manual": "无俄语说明书/功能不符", "none": "无明显痛点", "other": "其他"},
+        "SCENE_CN": {"fitness": "运动/健身", "health": "健康监测", "daily": "日常佩戴",
+                     "work": "办公/看消息", "gift": "送礼", "unknown": "未知"},
+        "REASON_CN": {"price": "价格合适", "design": "外观好看", "health": "健康监测功能",
+                      "battery": "续航好", "screen": "屏幕好", "gift": "送礼",
+                      "quality": "质量好", "brand": "品牌", "unknown": "未明确"},
     },
 }
 

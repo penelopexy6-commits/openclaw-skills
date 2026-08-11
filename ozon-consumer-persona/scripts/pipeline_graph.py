@@ -62,6 +62,8 @@ class PipelineState(TypedDict, total=False):
     review_decision: Any
     stats: dict
     report_path: str
+    no_cluster: bool
+    min_cluster_size: int
 
 
 def log(msg):
@@ -101,7 +103,8 @@ def node_cluster(state):
     log("[cluster] 聚类中...")
     vecs = np.array(state["vecs"], dtype=np.float32)
     norm = vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
-    cl = hdbscan.HDBSCAN(min_cluster_size=5, min_samples=1, metric="euclidean",
+    mcs = state.get("min_cluster_size", 5)
+    cl = hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=1, metric="euclidean",
                          cluster_selection_method="eom").fit(norm)
     labels = cl.labels_.tolist()
     n_cl = len(set(labels) - {-1})
@@ -115,6 +118,17 @@ def node_label(state):
     from cluster_pipeline_v2 import llm_label
     category = state.get("category", "泳衣")
     items = state["items"]
+    if state.get("no_cluster"):
+        # 语义密集品类（智能手表等）：跳过聚类，全量 LLM 打标
+        log(f"[label] no-cluster 模式：{len(items)} 条全量 LLM 打标...")
+        inherited = {}
+        for i in range(0, len(items), 50):
+            segs = [(r["review_id"], r["text"][:400]) for r in items[i:i+50]]
+            m = llm_label(segs, category=category)
+            for rid, f in m.items():
+                inherited[int(rid)] = f
+        log(f"[label] 全量打标完成 {len(inherited)} 条")
+        return {"inherited": inherited}
     labels = state["labels"]
     vecs = np.array(state["vecs"], dtype=np.float32)
     norm = vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
@@ -251,7 +265,7 @@ def build_personas(agg: dict, category: str = "泳衣") -> list[dict]:
     return cfg["build_personas"](agg)
 
 
-def write_obsidian(category: str, agg: dict, personas: list[dict], doc_name: str):
+def write_obsidian(category: str, agg: dict, personas: list[dict], doc_name: str, no_cluster=False):
     from datetime import date
     from category_config import get_config
     cfg = get_config(category)
@@ -273,7 +287,7 @@ def write_obsidian(category: str, agg: dict, personas: list[dict], doc_name: str
     doc = f"""# 26-{category}消费人群画像（{date.today()} 图引擎版）
 
 > 生成: pipeline_graph.py（LangGraph）｜ 数据: {agg['total_reviews']} 评论 / {agg['total_analyzed']} 条 LLM 语义分析
-> 方法: bge-m3 向量化 → HDBSCAN 聚类 → 每簇 3 代表 LLM 打标 → 继承 + 噪声兜底
+> 方法: bge-m3 向量化 → HDBSCAN 聚类 → 每簇 3 代表 LLM 打标 → 继承 + 噪声兜底（--no-cluster 模式: 全量 LLM 打标）
 
 ## 一、量化痛点排名（差评）
 | # | 痛点 | 占比 | 说明 |
@@ -309,7 +323,7 @@ def node_report(state):
     personas = build_personas(agg, category=cat)
     doc_name = f"26-{cat}消费人群画像.md"
     try:
-        write_obsidian(cat, agg, personas, doc_name)
+        write_obsidian(cat, agg, personas, doc_name, no_cluster=state.get("no_cluster"))
     except Exception as e:
         log(f"[report] Obsidian 写入失败: {type(e).__name__}: {e}")
     import json as _json
@@ -351,6 +365,8 @@ def main():
     ap.add_argument("--auto", action="store_true", help="自动模式：interrupt 直接 resume approved")
     ap.add_argument("--resume", action="store_true", help="从断点续跑（interrupt 处继续）")
     ap.add_argument("--reset", action="store_true", help="清 checkpoint")
+    ap.add_argument("--min-cluster-size", type=int, default=0, help="HDBSCAN 最小簇大小，0=默认5")
+    ap.add_argument("--no-cluster", action="store_true", help="跳过聚类，全量 LLM 打标（语义密集品类用）")
     args = ap.parse_args()
 
     thread_id = f"pipeline-{args.category}"
@@ -397,7 +413,12 @@ def main():
             else:
                 log("[resume] 无未完成执行")
         else:
-            run_once({"category": args.category}, "执行")
+            init = {"category": args.category}
+            if args.min_cluster_size:
+                init["min_cluster_size"] = args.min_cluster_size
+            if args.no_cluster:
+                init["no_cluster"] = True
+            run_once(init, "执行")
 
         snap2 = graph.get_state(config)
         log(f"最终 next={list(snap2.next)}")

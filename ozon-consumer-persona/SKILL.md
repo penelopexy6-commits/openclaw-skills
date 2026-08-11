@@ -27,6 +27,15 @@ Ozon 竞品评论消费者画像全流程：**采集评论 → 清洗 → LLM �
 - **人工审核**：interrupt() 暂停，低置信度簇（痛点标签不纯 <60%）→ 待审清单 → 人工确认后继续
 - 状态图：load → embed → cluster → label → review → aggregate → report
 
+### V4 模式开关（品类自适应，2026-08-11 新增）
+
+| 参数 | 用途 | 适用品类 |
+|---|---|---|
+| `--no-cluster` | 跳过聚类，全量 LLM 打标 | **语义密集品类**（智能手表等，评论话术高度相似 HDBSCAN 分不开） |
+| `--min-cluster-size N` | 调 HDBSCAN 最小簇大小 | 默认 5；簇过大可调小 |
+
+**⚠️ 重要教训（智能手表案例）**：语义密集品类（屏幕坏/续航差/断连这类高度相似话术）→ HDBSCAN 只出 2 个超大簇（~900 条/簇）→ 每簇 3 代表投票失真 → 整簇误标同一标签（假象 95% 单一痛点）。**判断方法**：看 `[cluster] N 簇` 日志，若簇数 <5 且单簇占比 >80% → 用 `--no-cluster` 重跑。
+
 ## 流程（V1 全自动）
 
 ```
@@ -47,6 +56,7 @@ Ozon 竞品评论消费者画像全流程：**采集评论 → 清洗 → LLM �
 | `pipeline_graph.py` | V3 LangGraph 图引擎（断点 + 审核，默认参数 mcs=5/thr=0.75） |
 | `category_config.py` | **品类配置层（跨品类复用核心）**：每品类定义 LLM 枚举 + Persona 模板 + 落地要点 |
 | `fetch_good_reviews.py` | 好评抓取（通用版，4-5 星，购买动机分析用） |
+| `fetch_bad_reviews.py` | 差评抓取（通用版，1-3 星，score_asc 翻页） |
 | `db_config.py` | 统一数据库配置（引用，不打包） |
 
 ## 品类配置（category_config.py）
@@ -58,8 +68,9 @@ Ozon 竞品评论消费者画像全流程：**采集评论 → 清洗 → LLM �
 | 泳衣（默认） | size/chest_support/fading | 丰满度假/泳池常客/大胸/送礼 | 尺码诚实+对照表 |
 | 宠物玩具 | durability/squeaker/choking/material | 耐咬刚需/安全敏感/材质挑剔 | 耐咬实测/发声器加固/犬种标注 |
 | 眼镜 | lens_quality/degree_wrong/broken/fit | 老花刚需/办公电脑/务实平价 | 度数精准/破损包装/材质如实 |
+| 智能手表 | screen/battery/sensor/connect/strap | 健康监测/连接体验/送礼 | 测量校准/续航实测/连接稳定 |
 
-**已验证**：宠物玩具（297 条）不耐咬 63.6% + 3 Persona；眼镜（1,166 条）镜片 26.9%/破损 22.3%/度数 15.5% + 3 Persona；泳衣回归正常。
+**已验证**：宠物玩具（297 条）不耐咬 63.6% + 3 Persona；眼镜（1,166 条）镜片 26.9%/破损 22.3%/度数 15.5% + 3 Persona；智能手表（968 条，--no-cluster）连接 20%/质量 20%/测量 12.8% + 3 Persona；泳衣回归正常。
 
 ## 关键参数（V2 定版）
 - HDBSCAN：`min_cluster_size=5`，欧氏距离（向量 L2 归一化后 = 余弦）
@@ -146,6 +157,10 @@ LLM 用对词典推理才有意义（宠物玩具跑出「不耐咬 63.6%」而�
 4. StateGraph(dict) 返回值整体替换 state → 必须 TypedDict 按字段合并
 5. interrupt() 不抛异常，靠 `graph.get_state().next` 非空检测
 6. 报告本地不持久化（老大指令）：只归档 Obsidian + Dify，/tmp 临时
+7. **语义密集品类聚类失效**（2026-08-11 智能手表）：HDBSCAN 只出 2 超大簇 → 3 代表投票失真（95% 假象）→ `--no-cluster` 全量 LLM 打标；判断：`[cluster] N 簇` 日志中簇数 <5 且单簇 >80%
+8. **TypedDict 缺字段被 LangGraph 丢弃**：自定义 state 字段（no_cluster/min_cluster_size）必须加进 PipelineState 声明，否则 invoke 时被过滤
+9. **前台价才是真实价**（老坑复现 2026-08-11）：v3/product/info 的 price 是设置价，买家看到的是 v5 prices 的 marketing_seller_price，分析价格一律用 v5
+10. ERP 插件改动后必须**重启 Edge CDP** 才生效（搜不到月销字段 = 插件没加载）
 
 ## 用法示例
 
