@@ -16,6 +16,7 @@ OpenClaw Agent 自建 Skills 集 —— Ozon 电商运营 + AI 工具链。
 | `ozon-step2-image-generation` | 电商主图生成(去文字抠白底 + 8图框架批量生成) | Banana Pro API、腾讯云 COS |
 | `ozon-step3-listing` | 商品上架(先查 MCP 再调 API, 属性格式验证) | Ozon Seller API |
 | `ozon-step5-operations` | 运营优化(广告投放 Performance API + 竞品监控) | Ozon Performance API |
+| `ozon-consumer-persona` | 消费者画像分析:评论采集→LLM 语义打标→Persona 聚类→归档(逐条/聚类/LangGraph 图引擎 3 模式) | Ozon 前台、DeepSeek、SiliconFlow bge-m3、PostgreSQL、LangGraph |
 | `vision-look` | 图片识别/视觉理解:AI 看图(硅基流动 Qwen3-VL),OCR/电商图/评价截图 | SiliconFlow API key |
 
 ## 快速开始
