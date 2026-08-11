@@ -113,6 +113,7 @@ def node_cluster(state):
 def node_label(state):
     import numpy as np
     from cluster_pipeline_v2 import llm_label
+    category = state.get("category", "泳衣")
     items = state["items"]
     labels = state["labels"]
     vecs = np.array(state["vecs"], dtype=np.float32)
@@ -132,7 +133,7 @@ def node_label(state):
         c = c / np.linalg.norm(c)
         d = np.linalg.norm(vv - c, axis=1)
         reps = [items[idx[j]] for j in np.argsort(d)[:3]]
-        m = llm_label([(r["review_id"], r["text"][:400]) for r in reps])
+        m = llm_label([(r["review_id"], r["text"][:400]) for r in reps], category=category)
         vote = {}
         for f in ("pain_point", "emotion", "body_feature", "usage_scene", "purchase_reason"):
             vals = [m.get(str(r["review_id"]), {}).get(f) for r in reps]
@@ -153,7 +154,7 @@ def node_label(state):
         log(f"[label] 噪声点 {len(pending_noise)} 条 LLM 兜底...")
         for i in range(0, len(pending_noise), 50):
             segs = [(r["review_id"], r["text"][:400]) for r in pending_noise[i:i+50]]
-            m = llm_label(segs)
+            m = llm_label(segs, category=category)
             for rid, f in m.items():
                 inherited[int(rid)] = f
     log(f"[label] {len(cluster_labels)} 簇打标 + 噪声兜底，共 {len(inherited)} 条")
@@ -243,73 +244,19 @@ def node_aggregate(state):
     return {"stats": agg}
 
 
-def build_personas(agg: dict) -> list[dict]:
-    """按量化信号生成 Persona（与 persona_pipeline.build_personas 一致）"""
-    pain_map = {k: pct for k, c, pct in agg["pain"]}
-    scene_map = {k: pct for k, c, pct in agg["scenes"]}
-    total = agg["total_reviews"] or 1
-    plus_pct = round(100.0 * agg["plus_signals"] / total, 1)
-    gift_pct = round(100.0 * agg["gift_signals"] / total, 1)
-    chest = pain_map.get("chest_support", 0)
-    pool = scene_map.get("pool", 0)
-    vacation = scene_map.get("vacation", 0)
-
-    personas = []
-    if plus_pct > 5 or pain_map.get("size", 0) > 15:
-        personas.append({
-            "id": "P1", "name": "成熟丰满度假女性（Plus Size Vacationer）",
-            "percentage": round(45 + (plus_pct - 10) * 0.5, 0) if plus_pct > 10 else 40,
-            "age": "35-55", "gender": "女", "body": f"丰满/大码（大码提及 {plus_pct}%）",
-            "scene": f"度假/海滩（{vacation}%）+ 出行前急购",
-            "pain": [("尺码偏小/不符", pain_map.get("size", 0)), ("胸部支撑不足", chest)],
-            "keywords": ["купальник женский больших размеров", "утягивающий", "высокой посадкой"],
-            "visual": "丰满真人模特 + 遮腹设计展示 + 身高体重尺码表",
-            "ad": ["大码也能美（模特同身材）", "显瘦遮肚前后对比", "尺码诚实承诺"],
-        })
-    if pool > 10:
-        personas.append({
-            "id": "P2", "name": "泳池常客女性（Pool Regular）",
-            "percentage": round(pool, 0),
-            "age": "45-65", "gender": "女", "body": "普通/微胖，多为连体款",
-            "scene": f"泳池/水上乐园（{pool}%）每周2-3次",
-            "pain": [("褪色掉色", pain_map.get("fading", 0)), ("质量差", pain_map.get("quality", 0))],
-            "keywords": ["купальник слитный женский", "для бассейна"],
-            "visual": "素色/黑色连体 + 面料耐氯承诺 + 机洗不变形",
-            "ad": ["每周游泳不褪色", "耐氯面料实测", "运动游泳专业款"],
-        })
-    if chest > 5:
-        personas.append({
-            "id": "P3", "name": "大胸支撑刚需人群（Big Bust）",
-            "percentage": round(chest, 0),
-            "age": "30-45", "gender": "女", "body": "大胸（D+杯）",
-            "scene": "泳池+度假双场景",
-            "pain": [("胸部支撑不足", chest), ("版型", pain_map.get("fit_shape", 0))],
-            "keywords": ["лиф купальный женский", "с поддержкой"],
-            "visual": "带钢圈/宽肩带设计特写 + 罩杯对照表",
-            "ad": ["大胸也能稳稳托住", "杯型不塌不空", "游泳不掉肩带"],
-        })
-    if gift_pct > 2:
-        personas.append({
-            "id": "P4", "name": "代买/送礼人群（Gift Buyer）",
-            "percentage": round(gift_pct * 3, 0) if gift_pct * 3 < 15 else 15,
-            "age": "30-55", "gender": "男/子女（代买）", "body": "无（给妻子/母亲/女儿买）",
-            "scene": "送礼、紧急补买",
-            "pain": [("发错货/二手", pain_map.get("wrong_item", 0)), ("缺件漏发", pain_map.get("missing_parts", 0))],
-            "keywords": ["купальник женский", "подарок"],
-            "visual": "完整套装展示（含泳裤）+ 礼品包装 + 尺码速查",
-            "ad": ["给她的完美礼物", "套装齐全不踩雷", "快速尺码指南"],
-        })
-    if not personas:
-        personas.append({
-            "id": "P1", "name": "核心购买人群", "percentage": 100, "age": "未知", "gender": "女",
-            "body": "未知", "scene": "未知", "pain": [("尺码问题", pain_map.get("size", 0))],
-            "keywords": ["купальник женский"], "visual": "产品实拍 + 尺码表", "ad": ["通用卖点"],
-        })
-    return personas
+def build_personas(agg: dict, category: str = "泳衣") -> list[dict]:
+    """按品类配置生成 Persona（见 category_config.py）"""
+    from category_config import get_config
+    cfg = get_config(category)
+    return cfg["build_personas"](agg)
 
 
 def write_obsidian(category: str, agg: dict, personas: list[dict], doc_name: str):
     from datetime import date
+    from category_config import get_config
+    cfg = get_config(category)
+    PAIN_CN, SCENE_CN, REASON_CN = cfg["PAIN_CN"], cfg["SCENE_CN"], cfg["REASON_CN"]
+    landing_points = cfg["landing_points"](agg)
     pain_lines = "\n".join(
         f"| {i} | **{PAIN_CN.get(k, k)}** | **{p}%** | 语义分析 {agg['total_analyzed']} 条差评 |"
         for i, (k, c, p) in enumerate(agg["pain"][:8], 1))
@@ -343,9 +290,7 @@ def write_obsidian(category: str, agg: dict, personas: list[dict], doc_name: str
 {chr(10).join(persona_blocks)}
 
 ## 五、落地要点
-1. 尺码诚实 + 身高体重对照表（第一痛点 {agg['pain'][0][2] if agg['pain'] else 0}%）
-2. 卖点按 Persona 打（见各卡主图/广告方向）
-3. 品控红线：套装完整 + 标签齐全 + 质检
+{chr(10).join('1. ' + p if i == 0 else f'{i+1}. ' + p for i, p in enumerate(landing_points))}
 
 ## 关联
 - → [[25-{店铺}消费人群画像]] ｜ SOP《消费者画像分析 SOP V1.0》
@@ -361,7 +306,7 @@ def node_report(state):
     """Persona 生成 + Obsidian 报告（纯本地逻辑，无外部依赖）"""
     cat = state["category"]
     agg = state["stats"]
-    personas = build_personas(agg)
+    personas = build_personas(agg, category=cat)
     doc_name = f"26-{cat}消费人群画像.md"
     try:
         write_obsidian(cat, agg, personas, doc_name)

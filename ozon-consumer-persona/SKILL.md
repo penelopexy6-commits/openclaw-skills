@@ -45,7 +45,21 @@ Ozon 竞品评论消费者画像全流程：**采集评论 → 清洗 → LLM �
 | `persona_pipeline.py` | V1 全流程（采集依赖 MCP venv：ru-marketplace-mcp 的 ozon-connector） |
 | `cluster_pipeline_v2.py` | V2 聚类（bge-m3 向量化 → HDBSCAN → 每簇 3 代表打标 → 继承） |
 | `pipeline_graph.py` | V3 LangGraph 图引擎（断点 + 审核，默认参数 mcs=5/thr=0.75） |
+| `category_config.py` | **品类配置层（跨品类复用核心）**：每品类定义 LLM 枚举 + Persona 模板 + 落地要点 |
+| `fetch_good_reviews.py` | 好评抓取（通用版，4-5 星，购买动机分析用） |
 | `db_config.py` | 统一数据库配置（引用，不打包） |
+
+## 品类配置（category_config.py）
+
+新增品类只需加一个配置块（prompt_enums + build_personas + landing_points）：
+
+| 品类 | 痛点枚举 | Persona | 落地要点 |
+|---|---|---|---|
+| 泳衣（默认） | size/chest_support/fading | 丰满度假/泳池常客/大胸/送礼 | 尺码诚实+对照表 |
+| 宠物玩具 | durability/squeaker/choking/material | 耐咬刚需/安全敏感/材质挑剔 | 耐咬实测/发声器加固/犬种标注 |
+| 眼镜 | lens_quality/degree_wrong/broken/fit | 老花刚需/办公电脑/务实平价 | 度数精准/破损包装/材质如实 |
+
+**已验证**：宠物玩具（297 条）不耐咬 63.6% + 3 Persona；眼镜（1,166 条）镜片 26.9%/破损 22.3%/度数 15.5% + 3 Persona；泳衣回归正常。
 
 ## 关键参数（V2 定版）
 

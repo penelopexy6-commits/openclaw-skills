@@ -149,24 +149,23 @@ def cluster(vecs, min_cluster_size):
 
 
 # =====================================================================
-# Step 4: 每簇抽代表 → LLM 打标
+# Step 4: 每簇抽代表 → LLM 打标（枚举按品类，见 category_config）
 # =====================================================================
-PROMPT_TMPL = """你是俄罗斯电商消费者画像分析师。分析以下俄语泳衣评论，逐条提取结构化信息。
+def _build_prompt(category: str, lines: str) -> str:
+    from category_config import get_config
+    cfg = get_config(category)
+    return f"""你是俄罗斯电商消费者画像分析师。分析以下俄语{cfg['product_cn']}评论，逐条提取结构化信息。
 
 严格输出 JSON 数组，每条格式：
 {{"id": 序号, "pain_point": "枚举值", "emotion": "枚举值", "body_feature": "枚举值", "usage_scene": "枚举值", "purchase_reason": "枚举值"}}
 
 枚举说明：
-- pain_point: size=尺码问题, chest_support=胸部支撑, missing_parts=缺件漏发, wrong_item=发错货/二手, quality=质量差, pilling=勾丝起球, fading=褪色, workmanship=做工瑕疵, fit_shape=版型/上身效果, fabric=面料, none=无明显痛点, other=其他
-- emotion: positive=满意, neutral=一般, negative=失望, angry=愤怒
-- body_feature: slim=苗条, normal=普通, plus_size=丰满/大码, big_bust=大胸, unknown=无法判断
-- usage_scene: pool=泳池, vacation=度假/海滩, sport=运动游泳, sauna=桑拿, gift=送礼, daily=日常, unknown=无法判断
-- purchase_reason: slimming=显瘦塑形, comfort=舒适, design=设计好看, quality=质量好, price=价格, support=支撑好, brand=品牌, unknown=无
+{cfg['prompt_enums']}
 
 只输出 JSON，不要任何解释。无法判断的字段用 unknown。
 
 评论列表（每条以 [序号] 开头，输出时 id 必须严格等于该序号，例如第一条 id=1）：
-{items}"""
+{lines}"""
 
 
 def call_api(messages, retries=3):
@@ -195,10 +194,10 @@ def parse_json_array(out):
         return []
 
 
-def llm_label(segments):
+def llm_label(segments, category="泳衣"):
     """segments: [(review_id, text), ...] → {review_id: labels}"""
     lines = "\n".join(f"[{i+1}] {t}" for i, (_, t) in enumerate(segments))
-    prompt = PROMPT_TMPL.format(items=lines)
+    prompt = _build_prompt(category, lines)
     out = call_api([
         {"role": "system", "content": "你是俄罗斯电商消费者画像分析师，只输出严格 JSON。"},
         {"role": "user", "content": prompt},
@@ -222,7 +221,7 @@ def llm_label(segments):
     return result
 
 
-def label_clusters(items, labels, min_cluster_size, threshold=0.85):
+def label_clusters(items, labels, min_cluster_size, threshold=0.85, category="泳衣"):
     """给每个簇打标：抽代表 LLM 打标 → 投票得簇标签 → 继承给全簇
 
     噪声点/未聚类点：先和簇质心做余弦匹配，>threshold 直接继承（0 成本），
@@ -252,7 +251,7 @@ def label_clusters(items, labels, min_cluster_size, threshold=0.85):
         rep_idx = np.argsort(dists)[:k]
         reps = [mem[i] for i in rep_idx]
         segs = [(r["review_id"], r["text"][:400]) for r in reps]
-        labels_map = llm_label(segs)
+        labels_map = llm_label(segs, category=category)
         llm_calls += 1
         llm_labeled += len(labels_map)
         # 投票：每个字段取众数
@@ -303,7 +302,7 @@ def label_clusters(items, labels, min_cluster_size, threshold=0.85):
     if pending:
         for i in range(0, len(pending), 50):
             segs = [(r["review_id"], r["text"][:400]) for r in pending[i:i+50]]
-            m = llm_label(segs)
+            m = llm_label(segs, category=category)
             llm_calls += 1
             llm_labeled += len(m)
             for rid, f in m.items():
@@ -375,7 +374,7 @@ def main():
 
     # 打标
     cluster_labels, inherited, llm_calls, llm_labeled, centroids, lab_list = \
-        label_clusters(long_items, labels, args.min_cluster_size, threshold=args.threshold)
+        label_clusters(long_items, labels, args.min_cluster_size, threshold=args.threshold, category=args.category)
 
     # 短文本：先质心匹配，匹配不上才 LLM（短文本没有 _vec，需先向量化）
     if short_items:
@@ -402,7 +401,7 @@ def main():
             log(f"短文本 {len(short_items)} 条全部 LLM 兜底（无簇）")
         for i in range(0, len(pending), 50):
             segs = [(r["review_id"], r["text"][:400]) for r in pending[i:i+50]]
-            m = llm_label(segs)
+            m = llm_label(segs, category=category)
             llm_calls += 1
             llm_labeled += len(m)
             for rid, f in m.items():
